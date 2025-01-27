@@ -11,10 +11,19 @@
 
 [Packages]
   MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
 
 [LibraryClasses]
   UefiApplicationEntryPoint
   UefiLib
+  UefiBootServicesTableLib
+  UefiRuntimeServicesTableLib
+  DebugLib
+  MemoryAllocationLib
+  PrintLib
+  BaseLib
+  BaseMemoryLib
+  CacheMaintenanceLib
 
 [Guids]
 
