@@ -7,7 +7,7 @@
   ENTRY_POINT = UefiMain
 
 [Sources]
-  UefiMain.c
+  MemTest.c
 
 [Packages]
   MdePkg/MdePkg.dec
@@ -30,6 +30,7 @@
 [Ppis]
 
 [Protocols]
+  gEfiMpServiceProtocolGuid
 
 [FeaturePcd]
 
