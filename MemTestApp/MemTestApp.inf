@@ -4,7 +4,7 @@
   FILE_GUID = 183c588c-0367-42c7-8e59-b7daace41404
   MODULE_TYPE = UEFI_APPLICATION
   VERSION_STRING = 1.0
-  ENTRY_POINT = UefiMain
+  ENTRY_POINT = ShellCEntryLib
 
 [Sources]
   MemTest.c
@@ -12,9 +12,10 @@
 [Packages]
   MdePkg/MdePkg.dec
   MdeModulePkg/MdeModulePkg.dec
+  ShellPkg/ShellPkg.dec
 
 [LibraryClasses]
-  UefiApplicationEntryPoint
+  ShellCEntryLib
   UefiLib
   UefiBootServicesTableLib
   UefiRuntimeServicesTableLib

@@ -8,6 +8,7 @@
 #include <Pi/PiDxeCis.h>
 #include <Protocol/MpService.h>
 #include <Protocol/SimpleFileSystem.h>
+#include <Library/ShellCEntryLib.h>
 
 enum {
   PAGE_SIZE     = 1 << 12,
@@ -299,8 +300,7 @@ fail:
   return FALSE;
 }
 
-EFI_STATUS EFIAPI UefiMain(IN EFI_HANDLE imgHandle,
-                            IN EFI_SYSTEM_TABLE *sysTable) {
+INTN EFIAPI ShellAppMain(IN UINTN Argc, IN CHAR16 **Argv) {
   EFI_STATUS Status;
   EFI_MEMORY_DESCRIPTOR *MapEntry;
   // UEFI apps automatically exit after 5 minutes. Stop that here
