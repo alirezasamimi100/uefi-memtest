@@ -9,7 +9,10 @@
 #include <Protocol/MpService.h>
 
 enum {
-  PAGE_SIZE = 1 << 12,
+  PAGE_SIZE     = 1 << 12,
+  ROW_SIZE      = 1 << 13,
+  PAGES_IN_ROW  = ROW_SIZE / PAGE_SIZE,
+  NUM_READS     = 1024,
 };
 
 EFI_MP_SERVICES_PROTOCOL *gMpService;
@@ -22,6 +25,7 @@ UINTN MapKey;
 UINT32 DescVer;
 UINT64 NPage = 0;
 UINTN MemMapSize = 0;
+UINT64 MaxPage = 0;
 
 BOOLEAN EFIAPI WalkingOnesTest() {
   UINT64 *End;
@@ -83,7 +87,7 @@ VOID EFIAPI IdentityTestWorker(VOID* OUT Res) {
       End = (UINT64 *)(MapEntry->PhysicalStart + MapEntry->NumberOfPages * PAGE_SIZE);
       for (; Ptr < End; Ptr += NProc) {
         if (*Ptr != (UINT64)Ptr) {
-          *(UINT64**)Res = Ptr;
+          *(UINT64 **)Res = Ptr;
           return;
         }
       }
@@ -96,7 +100,6 @@ BOOLEAN EFIAPI IdentityTest() {
   EFI_STATUS Status;
   EFI_EVENT Event;
   UINT64* Res = (UINT64*) ~0x0ULL;
-  UINTN Dummy;
   Status = gBS->CreateEvent(0, TPL_NOTIFY, NULL, NULL, &Event);
   if (EFI_ERROR(Status)) {
     Print(L"Failed to create event: %r\r\n", Status);
@@ -108,7 +111,7 @@ BOOLEAN EFIAPI IdentityTest() {
     return FALSE;
   }
   IdentityTestWorker(&Res);
-  Status = gBS->WaitForEvent(1, &Event, &Dummy);
+  Status = gBS->WaitForEvent(1, &Event, NULL);
   if (EFI_ERROR(Status)) {
     Print(L"Failed to wait for event: %r\r\n", Status);
     return FALSE;
@@ -117,6 +120,83 @@ BOOLEAN EFIAPI IdentityTest() {
     Print(L"Error at %p, expected %lx, got %lx\r\n", Res, (UINT64)Res, *Res);
     return FALSE;
   }
+  return TRUE;
+}
+
+UINT64 EFIAPI Hammer(UINT64 *FirstPtr, UINT64 *SecondPtr) {
+  UINT64 i;
+  UINT64 sum = 0;
+  for (i = 0; i < NUM_READS; i++) {
+    sum += FirstPtr[0];
+    sum += SecondPtr[0];
+    WriteBackInvalidateDataCacheRange(FirstPtr, 8);
+    WriteBackInvalidateDataCacheRange(SecondPtr, 8);
+  }
+  return sum;
+}
+
+BOOLEAN EFIAPI RowHammerTest() {
+  UINT64 Page;
+  UINT64 DPage, UPage, MPage;
+  UINT64 *Ptr;
+  UINT64 i, j, k;
+  EFI_MEMORY_DESCRIPTOR *MapEntry = MemoryMap;
+  BOOLEAN *PageValid, HasValid;
+  PageValid = AllocateZeroPool((MaxPage + 7) / 8);
+  MapEntry = MemoryMap;
+  while (MapEntry < MapEnd) {
+    if (MapEntry->Type == EfiConventionalMemory) {
+      Page = MapEntry->PhysicalStart / PAGE_SIZE;
+      for (i = 0; i < MapEntry->NumberOfPages; i++, Page++) {
+        PageValid[Page / 8] |= 1 << (Page % 8);
+      }
+    }
+    MapEntry = NEXT_MEMORY_DESCRIPTOR(MapEntry, DescSize);
+  }
+  for (Page = PAGES_IN_ROW; Page + PAGES_IN_ROW < MaxPage; Page += PAGES_IN_ROW) {
+    for (i = 0; i < PAGES_IN_ROW; i++) {
+      UPage = Page - PAGES_IN_ROW + i;
+      if (!(PageValid[UPage / 8] & (1 << (UPage % 8)))) {
+        continue;
+      }
+      for (j = 0; j < PAGES_IN_ROW; j++) {
+        DPage = Page + PAGES_IN_ROW + j;
+        if (!(PageValid[DPage / 8] & (1 << (DPage % 8)))) {
+          continue;
+        }
+        HasValid = FALSE;
+        for (k = 0; k < PAGES_IN_ROW; k++) {
+          MPage = Page + k;
+          if (!(PageValid[MPage / 8] & (1 << (MPage % 8)))) {
+            continue;
+          }
+          HasValid = TRUE;
+          Ptr = (UINT64 *)(MPage * PAGE_SIZE);
+          SetMem(Ptr, PAGE_SIZE, 0xff);
+          WriteBackInvalidateDataCacheRange(Ptr, PAGE_SIZE);
+        }
+        if (HasValid) {
+            Hammer((UINT64 *)(UPage * PAGE_SIZE), (UINT64 *)(DPage * PAGE_SIZE));
+            for (k = 0; k < PAGES_IN_ROW; k++) {
+              MPage = Page + k;
+              if (!(PageValid[MPage / 8] & (1 << (MPage % 8)))) {
+                continue;
+              }
+              Ptr = (UINT64 *)(MPage * PAGE_SIZE);
+              if (*Ptr != 0xffffffffffffffff) {
+                Print(L"Row hammer detected at %p\r\n", Ptr);
+                return FALSE;
+              }
+              if (CompareMem(Ptr, Ptr + 1, PAGE_SIZE - 8) != 0) {
+                Print(L"Row hammer detected at %p\r\n", Ptr);
+                return FALSE;
+              }
+          }
+        }
+      }
+    }
+  }
+  FreePool(PageValid);
   return TRUE;
 }
 
@@ -153,6 +233,7 @@ EFI_STATUS EFIAPI UefiMain(IN EFI_HANDLE imgHandle,
   while (MapEntry < MapEnd) {
     if (MapEntry->Type == EfiConventionalMemory) {
       NPage += MapEntry->NumberOfPages;
+      MaxPage = MAX(MaxPage, MapEntry->PhysicalStart / PAGE_SIZE + MapEntry->NumberOfPages);
     }
     MapEntry = NEXT_MEMORY_DESCRIPTOR(MapEntry, DescSize);
   }
@@ -166,6 +247,11 @@ EFI_STATUS EFIAPI UefiMain(IN EFI_HANDLE imgHandle,
     Print(L"Identity test failed\r\n");
   } else {
     Print(L"Identity test passed\r\n");
+  }
+  if (!RowHammerTest()) {
+    Print(L"Row hammer test failed\r\n");
+  } else {
+    Print(L"Row hammer test passed\r\n");
   }
   FreePool(MemoryMap);
   return EFI_SUCCESS;
