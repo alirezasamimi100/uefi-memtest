@@ -10,6 +10,16 @@
 #include <Protocol/SimpleFileSystem.h>
 #include <Library/ShellCEntryLib.h>
 
+#define RUN_TEST(test) \
+  do { \
+    if (!(test())) { \
+      Print(L## #test L" failed\r\n"); \
+    } else { \
+      Print(L## #test L" passed\r\n"); \
+    } \
+  } while (0)
+
+
 enum {
   PAGE_SIZE     = 1 << 12,
   ROW_SIZE      = 1 << 13,
@@ -29,6 +39,7 @@ UINT32 DescVer;
 UINT64 NPage = 0;
 UINTN MemMapSize = 0;
 UINT64 MaxPage = 0;
+BOOLEAN *PageValid;
 
 BOOLEAN EFIAPI WalkingOnesTest() {
   UINT64 *End;
@@ -144,8 +155,7 @@ BOOLEAN EFIAPI RowHammerTest() {
   UINT64 *Ptr;
   UINT64 i, j, k;
   EFI_MEMORY_DESCRIPTOR *MapEntry = MemoryMap;
-  BOOLEAN *PageValid, HasValid;
-  PageValid = AllocateZeroPool((MaxPage + 7) / 8);
+  BOOLEAN HasValid;
   MapEntry = MemoryMap;
   while (MapEntry < MapEnd) {
     if (MapEntry->Type == EfiConventionalMemory) {
@@ -199,7 +209,6 @@ BOOLEAN EFIAPI RowHammerTest() {
       }
     }
   }
-  FreePool(PageValid);
   return TRUE;
 }
 
@@ -335,27 +344,51 @@ INTN EFIAPI ShellAppMain(IN UINTN Argc, IN CHAR16 **Argv) {
     }
     MapEntry = NEXT_MEMORY_DESCRIPTOR(MapEntry, DescSize);
   }
+  FreePool(MemoryMap);
+  PageValid = AllocateZeroPool((MaxPage + 7) / 8);
+  if (PageValid == NULL) {
+    Print(L"Failed to allocate page valid array\r\n");
+    return EFI_OUT_OF_RESOURCES;
+  }
+  do {
+    MemoryMap = AllocatePool(MemMapSize);
+    if (MemoryMap == NULL)
+      ASSERT(FALSE);
+    Status =
+        gBS->GetMemoryMap(&MemMapSize, MemoryMap, &MapKey, &DescSize, &DescVer);
+    if (EFI_ERROR(Status))
+      FreePool(MemoryMap);
+  } while (Status == EFI_BUFFER_TOO_SMALL);
+  MapEntry = MemoryMap;
+  MapEnd = (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)MemoryMap + MemMapSize);
   Print(L"Total number of pages %lu\r\n", NPage);
-  if (!WalkingOnesTest()) {
-    Print(L"Walking ones test failed\r\n");
+  if (Argc == 1) {
+    RUN_TEST(WalkingOnesTest);
+    RUN_TEST(IdentityTest);
+    RUN_TEST(RowHammerTest);
+    RUN_TEST(DMATest);
+  } else if (Argc == 2) {
+    if (StrCmp(Argv[1], L"walking_ones") == 0) {
+      RUN_TEST(WalkingOnesTest);
+    } else if (StrCmp(Argv[1], L"identity") == 0) {
+      RUN_TEST(IdentityTest);
+    } else if (StrCmp(Argv[1], L"row_hammer") == 0) {
+      RUN_TEST(RowHammerTest);
+    } else if (StrCmp(Argv[1], L"dma") == 0) {
+      RUN_TEST(DMATest);
+    } else {
+      Print(L"Usage: memtest [walking_ones|identity|row_hammer|dma]\r\n");
+      FreePool(MemoryMap);
+      FreePool(PageValid);
+      return EFI_INVALID_PARAMETER;
+    }
   } else {
-    Print(L"Walking ones test passed\r\n");
-  }
-  if (!IdentityTest()) {
-    Print(L"Identity test failed\r\n");
-  } else {
-    Print(L"Identity test passed\r\n");
-  }
-  if (!RowHammerTest()) {
-    Print(L"Row hammer test failed\r\n");
-  } else {
-    Print(L"Row hammer test passed\r\n");
-  }
-  if (!DMATest()) {
-    Print(L"DMA test failed\r\n");
-  } else {
-    Print(L"DMA test passed\r\n");
+    Print(L"Usage: memtest [walking_ones|identity|row_hammer|dma]\r\n");
+    FreePool(MemoryMap);
+    FreePool(PageValid);
+    return EFI_INVALID_PARAMETER;
   }
   FreePool(MemoryMap);
+  FreePool(PageValid);
   return EFI_SUCCESS;
 }
