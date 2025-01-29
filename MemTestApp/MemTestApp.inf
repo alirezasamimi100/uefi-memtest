@@ -13,6 +13,7 @@
   MdePkg/MdePkg.dec
   MdeModulePkg/MdeModulePkg.dec
   ShellPkg/ShellPkg.dec
+  EmbeddedPkg/EmbeddedPkg.dec
 
 [LibraryClasses]
   ShellCEntryLib
@@ -25,6 +26,7 @@
   BaseLib
   BaseMemoryLib
   CacheMaintenanceLib
+  TimeBaseLib
 
 [Guids]
 

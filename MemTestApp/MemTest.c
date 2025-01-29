@@ -9,6 +9,7 @@
 #include <Protocol/MpService.h>
 #include <Protocol/SimpleFileSystem.h>
 #include <Library/ShellCEntryLib.h>
+#include <Library/TimeBaseLib.h>
 
 #define RUN_TEST(test) \
   do { \
