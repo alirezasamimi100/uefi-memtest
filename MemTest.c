@@ -7,12 +7,14 @@
 #include <Library/UefiLib.h>
 #include <Pi/PiDxeCis.h>
 #include <Protocol/MpService.h>
+#include <Protocol/SimpleFileSystem.h>
 
 enum {
   PAGE_SIZE     = 1 << 12,
   ROW_SIZE      = 1 << 13,
   PAGES_IN_ROW  = ROW_SIZE / PAGE_SIZE,
   NUM_READS     = 1024,
+  DMA_SIZE      = 8 * PAGE_SIZE,
 };
 
 EFI_MP_SERVICES_PROTOCOL *gMpService;
@@ -200,14 +202,110 @@ BOOLEAN EFIAPI RowHammerTest() {
   return TRUE;
 }
 
+BOOLEAN EFIAPI DMATest() {
+  EFI_HANDLE *Handles = NULL;
+  UINTN HandleCount = 0;
+  UINTN i;
+  UINTN BufferSize;
+  UINT64 *WriteBuffer;
+  UINT64 *ReadBuffer;
+  UINT64 Pattern = 0x1;
+  EFI_STATUS Status = gBS->LocateHandleBuffer(ByProtocol, &gEfiSimpleFileSystemProtocolGuid, NULL, &HandleCount, &Handles);
+  if (EFI_ERROR(Status)) {
+    Print(L"Failed to locate handles: %r\r\n", Status);
+    return FALSE;
+  }
+  WriteBuffer = AllocatePool(DMA_SIZE);
+  if (WriteBuffer == NULL) {
+    Print(L"Failed to allocate buffer\r\n");
+    FreePool(Handles);
+    return FALSE;
+  }
+  ReadBuffer = AllocatePool(DMA_SIZE);
+  if (ReadBuffer == NULL) {
+    Print(L"Failed to allocate buffer\r\n");
+    FreePool(Handles);
+    FreePool(WriteBuffer);
+    return FALSE;
+  }
+  for (i = 0; i < DMA_SIZE / 8; i++) {
+    WriteBuffer[i] = Pattern;
+    Pattern = Pattern << 1 | Pattern >> 63;
+  }
+  for (i = 0; i < HandleCount; i++) {
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *Fs;
+    EFI_FILE_PROTOCOL *Root;
+    EFI_FILE_PROTOCOL *File = NULL;
+    Status = gBS->HandleProtocol(Handles[i], &gEfiSimpleFileSystemProtocolGuid, (VOID **)&Fs);
+    if (EFI_ERROR(Status)) {
+      Print(L"Failed to get SimpleFileSystem Protocol: %r\r\n", Status);
+      continue;
+    }
+    Status = Fs->OpenVolume(Fs, &Root);
+    if (EFI_ERROR(Status)) {
+      Print(L"Failed to open volume: %r\r\n", Status);
+      continue;
+    }
+    Status = Root->Open(Root, &File, L"memtest_dma_sample_file.bin", EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE
+                                                                   , EFI_FILE_HIDDEN | EFI_FILE_SYSTEM);
+    if (EFI_ERROR(Status)) {
+      continue;
+    }
+    BufferSize = DMA_SIZE;
+    Status = File->Write(File, &BufferSize, WriteBuffer);
+    if (EFI_ERROR(Status)) {
+      Print(L"Failed to write file: %r\r\n", Status);
+      File->Delete(File);
+      goto fail;
+    }
+    if (BufferSize != DMA_SIZE) {
+      Print(L"Write wasn't complete.\r\n");
+      File->Delete(File);
+      goto fail;
+    }
+    Status = File->SetPosition(File, 0);
+    if (EFI_ERROR(Status)) {
+      Print(L"Failed to set position: %r\r\n", Status);
+      File->Delete(File);
+      goto fail;
+    }
+    Status = File->Read(File, &BufferSize, ReadBuffer);
+    if (EFI_ERROR(Status)) {
+      Print(L"Failed to read file: %r\r\n", Status);
+      File->Delete(File);
+      goto fail;
+    }
+    if (BufferSize != DMA_SIZE) {
+      Print(L"Read wasn't complete.\r\n");
+      File->Delete(File);
+      goto fail;
+    }
+    if (CompareMem(WriteBuffer, ReadBuffer, DMA_SIZE) != 0) {
+      Print(L"Read buffer doesn't match write buffer.\r\n");
+      File->Delete(File);
+      goto fail;
+    }
+    FreePool(Handles);
+    FreePool(WriteBuffer);
+    FreePool(ReadBuffer);
+    File->Delete(File);
+    return TRUE;
+  }
+  Print(L"Failed to find place to write file.\r\n");
+fail:
+  FreePool(Handles);
+  FreePool(WriteBuffer);
+  FreePool(ReadBuffer);
+  return FALSE;
+}
+
 EFI_STATUS EFIAPI UefiMain(IN EFI_HANDLE imgHandle,
                             IN EFI_SYSTEM_TABLE *sysTable) {
   EFI_STATUS Status;
   EFI_MEMORY_DESCRIPTOR *MapEntry;
   // UEFI apps automatically exit after 5 minutes. Stop that here
   gBS->SetWatchdogTimer(0, 0, 0, NULL);
-  Status = gBS->LocateProtocol(&gEfiMpServiceProtocolGuid, NULL,
-                               (VOID **)&gMpService);
+  Status = gBS->LocateProtocol(&gEfiMpServiceProtocolGuid, NULL, (VOID **)&gMpService);
   if (EFI_ERROR(Status)) {
     Print(L"Failed to locate MpService Protocol: %r\r\n", Status);
     return Status;
@@ -252,6 +350,11 @@ EFI_STATUS EFIAPI UefiMain(IN EFI_HANDLE imgHandle,
     Print(L"Row hammer test failed\r\n");
   } else {
     Print(L"Row hammer test passed\r\n");
+  }
+  if (!DMATest()) {
+    Print(L"DMA test failed\r\n");
+  } else {
+    Print(L"DMA test passed\r\n");
   }
   FreePool(MemoryMap);
   return EFI_SUCCESS;
