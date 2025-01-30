@@ -31,5 +31,4 @@
   TimeBaseLib|EmbeddedPkg/Library/TimeBaseLib/TimeBaseLib.inf
 
 [Components.common]
-  ShellPkg/Library/UefiShellCEntryLib/UefiShellCEntryLib.inf
   MemTestPkg/MemTestApp/MemTestApp.inf
